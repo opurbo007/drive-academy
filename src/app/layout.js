@@ -2,10 +2,9 @@ import './globals.css'
 import Providers from '@/components/Providers'
 
 export const metadata = {
-  title: 'Drive Academy — Attendance',
+  title: 'Drive Academy Attendance',
   description: 'Driving training student attendance system',
   manifest: '/manifest.json',
-  themeColor: '#0a0c0f',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'black-translucent',
@@ -18,6 +17,13 @@ export const metadata = {
     ],
     apple: [{ url: '/icons/apple-touch-icon.png', sizes: '180x180' }],
   },
+}
+
+export const viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover',
+  themeColor: '#0a0c0f',
 }
 
 export default function RootLayout({ children }) {

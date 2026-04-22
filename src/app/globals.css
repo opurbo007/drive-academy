@@ -27,6 +27,14 @@ body {
 }
 
 .font-condensed { font-family: 'Barlow Condensed', sans-serif; }
+.app-shell {
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 8px);
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar { display: none; }
 
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: var(--bg); }
@@ -40,3 +48,12 @@ body {
 
 .student-row { transition: background 0.15s; }
 .student-row:hover { background: rgba(255,255,255,0.025) !important; }
+
+@media (max-width: 640px) {
+  body {
+    background-size: 28px 28px;
+    background-image:
+      repeating-linear-gradient(0deg, transparent, transparent 27px, #171c22 27px, #171c22 28px),
+      repeating-linear-gradient(90deg, transparent, transparent 27px, #171c22 27px, #171c22 28px);
+  }
+}
