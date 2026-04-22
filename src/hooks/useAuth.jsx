@@ -1,5 +1,6 @@
 'use client'
 import { createContext, useContext, useState, useEffect } from 'react'
+import { clearCachedUser, readCachedUser, saveCachedUser } from '@/lib/offlineSync'
 
 const AuthContext = createContext(null)
 
@@ -9,10 +10,17 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     const token = localStorage.getItem('da_token')
+    const cachedUser = readCachedUser()
+    if (cachedUser) setUser(cachedUser)
     if (!token) { setLoading(false); return }
     fetch('/api/auth/me', { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.ok ? r.json() : null)
-      .then(data => { if (data) setUser(data) })
+      .then(data => {
+        if (data) {
+          setUser(data)
+          saveCachedUser(data)
+        }
+      })
       .catch(() => {})
       .finally(() => setLoading(false))
   }, [])
@@ -26,12 +34,15 @@ export function AuthProvider({ children }) {
     const data = await r.json()
     if (!r.ok) throw new Error(data.error || 'Login failed')
     localStorage.setItem('da_token', data.token)
-    setUser({ username: data.username, role: data.role })
+    const nextUser = { username: data.username, role: data.role }
+    setUser(nextUser)
+    saveCachedUser(nextUser)
     return data
   }
 
   const logout = () => {
     localStorage.removeItem('da_token')
+    clearCachedUser()
     setUser(null)
   }
 

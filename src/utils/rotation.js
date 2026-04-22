@@ -24,6 +24,22 @@ export async function setLastRotationDate(date) {
   await Settings.findOneAndUpdate({ key: 'lastRotationDate' }, { value: date }, { upsert: true })
 }
 
+export async function reverseStudentOrder() {
+  const students = await Student.find({ active: true }).sort({ slotOrder: 1 })
+  const total = students.length
+  if (total <= 1) return false
+
+  const bulk = students.map((student, index) => ({
+    updateOne: {
+      filter: { _id: student._id },
+      update: { slotOrder: total - 1 - index },
+    },
+  }))
+
+  await Student.bulkWrite(bulk)
+  return true
+}
+
 function nextWorkingDay(offDays, dateStr) {
   let d = new Date(dateStr + 'T00:00:00')
   while (true) {
@@ -45,15 +61,7 @@ export async function rotateIfNeeded(todayStr) {
     if (todayStr < expectedNext) return false
   }
 
-  const students = await Student.find({ active: true }).sort({ slotOrder: 1 })
-  const total = students.length
-  const bulk = students.map((s, i) => ({
-    updateOne: {
-      filter: { _id: s._id },
-      update: { slotOrder: total - 1 - i },
-    },
-  }))
-  await Student.bulkWrite(bulk)
+  await reverseStudentOrder()
   await setLastRotationDate(todayStr)
   return true
 }

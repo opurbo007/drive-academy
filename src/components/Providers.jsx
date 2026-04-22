@@ -1,7 +1,7 @@
 'use client'
 import { AuthProvider } from '@/hooks/useAuth'
 import Navbar from './Navbar'
-import { InstallPrompt, OfflineBanner, UpdateToast } from './PWA'
+import { InstallPrompt, OfflineBanner, SyncToast, UpdateToast } from './PWA'
 
 export default function Providers({ children }) {
   return (
@@ -14,6 +14,7 @@ export default function Providers({ children }) {
         </main>
       </div>
       <InstallPrompt />
+      <SyncToast />
       <UpdateToast />
     </AuthProvider>
   )

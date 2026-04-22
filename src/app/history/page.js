@@ -1,6 +1,7 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/hooks/useAuth'
+import { enqueueAttendanceMutation, readOfflineSnapshot, saveOfflineSnapshot } from '@/lib/offlineSync'
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const MONTH_FULL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
@@ -69,11 +70,25 @@ export default function HistoryPage() {
     try {
       const res = await fetch(`/api/attendance/by-date?date=${date}`)
       const data = await res.json()
-      setStudents(data.students || [])
-      setAttendance(data.attendance || {})
-      setIsOffDay(data.isOffDay || false)
+      const snapshot = {
+        students: data.students || [],
+        attendance: data.attendance || {},
+        isOffDay: data.isOffDay || false,
+      }
+      setStudents(snapshot.students)
+      setAttendance(snapshot.attendance)
+      setIsOffDay(snapshot.isOffDay)
+      saveOfflineSnapshot(`history:${date}`, snapshot)
     } catch {
-      setError('Failed to load attendance for this date')
+      const snapshot = readOfflineSnapshot(`history:${date}`)
+      if (snapshot?.value) {
+        setStudents(snapshot.value.students || [])
+        setAttendance(snapshot.value.attendance || {})
+        setIsOffDay(snapshot.value.isOffDay || false)
+        flash(setSaveMsg, 'Loaded cached attendance for offline use.')
+      } else {
+        setError('Failed to load attendance for this date')
+      }
     } finally {
       setDateLoading(false)
     }
@@ -84,13 +99,33 @@ export default function HistoryPage() {
     loadDate(date)
   }
 
+  const updateCachedHistory = (nextAttendance) => {
+    if (!selectedDate) return
+    saveOfflineSnapshot(`history:${selectedDate}`, {
+      students,
+      attendance: nextAttendance,
+      isOffDay,
+    })
+  }
+
   const toggleAttendance = async (studentId) => {
     if (!isAdmin) return
     const isPast = selectedDate < today
     if (!isPast && isOffDay) return
+
+    const present = !attendance[studentId]
+    if (!navigator.onLine) {
+      const nextAttendance = { ...attendance, [studentId]: present }
+      setAttendance(nextAttendance)
+      updateCachedHistory(nextAttendance)
+      enqueueAttendanceMutation({ type: 'mark', payload: { date: selectedDate, studentId, present } })
+      flash(setSaveMsg, 'Saved offline. It will sync automatically later.')
+      setRecordDates(prev => new Set([...prev, selectedDate]))
+      return
+    }
+
     setMarkingId(studentId)
     try {
-      const present = !attendance[studentId]
       const res = await authFetch('/api/attendance/mark', {
         method: 'POST',
         body: JSON.stringify({ date: selectedDate, studentId, present }),
@@ -99,11 +134,21 @@ export default function HistoryPage() {
         const data = await res.json()
         throw new Error(data.error)
       }
-      setAttendance(prev => ({ ...prev, [studentId]: present }))
+      const nextAttendance = { ...attendance, [studentId]: present }
+      setAttendance(nextAttendance)
+      updateCachedHistory(nextAttendance)
       setRecordDates(prev => new Set([...prev, selectedDate]))
       flash(setSaveMsg, 'Saved')
     } catch (e) {
-      flash(setError, e.message || 'Failed to save')
+      if (!navigator.onLine) {
+        const nextAttendance = { ...attendance, [studentId]: present }
+        setAttendance(nextAttendance)
+        updateCachedHistory(nextAttendance)
+        enqueueAttendanceMutation({ type: 'mark', payload: { date: selectedDate, studentId, present } })
+        flash(setSaveMsg, 'Saved offline. It will sync automatically later.')
+      } else {
+        flash(setError, e.message || 'Failed to save')
+      }
     } finally {
       setMarkingId(null)
     }
@@ -111,8 +156,22 @@ export default function HistoryPage() {
 
   const markAll = async (present) => {
     if (!isAdmin) return
+    const studentIds = students.map(student => student.studentId)
+
+    if (!navigator.onLine) {
+      const nextAttendance = {}
+      studentIds.forEach(id => {
+        nextAttendance[id] = present
+      })
+      setAttendance(nextAttendance)
+      updateCachedHistory(nextAttendance)
+      enqueueAttendanceMutation({ type: 'mark-all', payload: { date: selectedDate, studentIds, present } })
+      setRecordDates(prev => new Set([...prev, selectedDate]))
+      flash(setSaveMsg, 'Bulk update saved offline. It will sync automatically later.')
+      return
+    }
+
     try {
-      const studentIds = students.map(student => student.studentId)
       const res = await authFetch('/api/attendance/mark-all', {
         method: 'POST',
         body: JSON.stringify({ date: selectedDate, studentIds, present }),
@@ -126,10 +185,23 @@ export default function HistoryPage() {
         nextAttendance[id] = present
       })
       setAttendance(nextAttendance)
+      updateCachedHistory(nextAttendance)
       setRecordDates(prev => new Set([...prev, selectedDate]))
       flash(setSaveMsg, 'All updated')
     } catch (e) {
-      flash(setError, e.message || 'Failed')
+      if (!navigator.onLine) {
+        const nextAttendance = {}
+        studentIds.forEach(id => {
+          nextAttendance[id] = present
+        })
+        setAttendance(nextAttendance)
+        updateCachedHistory(nextAttendance)
+        enqueueAttendanceMutation({ type: 'mark-all', payload: { date: selectedDate, studentIds, present } })
+        setRecordDates(prev => new Set([...prev, selectedDate]))
+        flash(setSaveMsg, 'Bulk update saved offline. It will sync automatically later.')
+      } else {
+        flash(setError, e.message || 'Failed')
+      }
     }
   }
 
@@ -174,31 +246,13 @@ export default function HistoryPage() {
       <div className="grid gap-5 sm:gap-6 lg:grid-cols-[minmax(0,340px)_minmax(0,1fr)]">
         <div style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
           <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: '1px solid var(--border)', background: '#0d1014' }}>
-            <button
-              onClick={prevMonth}
-              className="font-condensed font-bold text-sm px-3 py-2 transition-all"
-              style={{ color: 'var(--muted)', background: 'transparent', border: '1px solid var(--border)', cursor: 'pointer' }}
-              onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--text)'; e.currentTarget.style.color = 'var(--text)' }}
-              onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--muted)' }}
-            >
+            <button onClick={prevMonth} className="font-condensed font-bold text-sm px-3 py-2 transition-all" style={{ color: 'var(--muted)', background: 'transparent', border: '1px solid var(--border)', cursor: 'pointer' }}>
               Prev
             </button>
             <span className="font-condensed font-bold text-sm tracking-widest uppercase text-center" style={{ color: 'var(--text)' }}>
               {MONTH_FULL[calMonth]} {calYear}
             </span>
-            <button
-              onClick={nextMonth}
-              disabled={isCurrentMonth}
-              className="font-condensed font-bold text-sm px-3 py-2 transition-all"
-              style={{
-                color: isCurrentMonth ? 'var(--border)' : 'var(--muted)',
-                background: 'transparent',
-                border: '1px solid var(--border)',
-                cursor: isCurrentMonth ? 'not-allowed' : 'pointer',
-              }}
-              onMouseEnter={e => { if (!isCurrentMonth) { e.currentTarget.style.borderColor = 'var(--text)'; e.currentTarget.style.color = 'var(--text)' } }}
-              onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = isCurrentMonth ? 'var(--border)' : 'var(--muted)' }}
-            >
+            <button onClick={nextMonth} disabled={isCurrentMonth} className="font-condensed font-bold text-sm px-3 py-2 transition-all" style={{ color: isCurrentMonth ? 'var(--border)' : 'var(--muted)', background: 'transparent', border: '1px solid var(--border)', cursor: isCurrentMonth ? 'not-allowed' : 'pointer' }}>
               Next
             </button>
           </div>
@@ -229,35 +283,15 @@ export default function HistoryPage() {
                       disabled={isFuture}
                       onClick={() => !isFuture && selectDate(dateStr)}
                       className="relative flex flex-col items-center justify-center h-11 sm:h-10 transition-all font-condensed font-bold text-sm"
-                      style={{
-                        cursor: isFuture ? 'not-allowed' : 'pointer',
-                        background: isSelected ? 'var(--accent)' : isToday ? 'rgba(245,166,35,0.12)' : 'transparent',
-                        border: `1px solid ${isSelected ? 'var(--accent)' : isToday ? 'rgba(245,166,35,0.3)' : 'transparent'}`,
-                        color: isSelected ? '#000' : isFuture ? 'var(--border)' : isToday ? 'var(--accent)' : 'var(--text)',
-                      }}
-                      onMouseEnter={e => { if (!isFuture && !isSelected) e.currentTarget.style.background = 'rgba(255,255,255,0.05)' }}
-                      onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = isToday ? 'rgba(245,166,35,0.12)' : 'transparent' }}
+                      style={{ cursor: isFuture ? 'not-allowed' : 'pointer', background: isSelected ? 'var(--accent)' : isToday ? 'rgba(245,166,35,0.12)' : 'transparent', border: `1px solid ${isSelected ? 'var(--accent)' : isToday ? 'rgba(245,166,35,0.3)' : 'transparent'}`, color: isSelected ? '#000' : isFuture ? 'var(--border)' : isToday ? 'var(--accent)' : 'var(--text)' }}
                     >
                       {day}
-                      {hasRecord && !isSelected && (
-                        <span className="absolute bottom-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full" style={{ background: 'var(--green)' }} />
-                      )}
+                      {hasRecord && !isSelected && <span className="absolute bottom-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full" style={{ background: 'var(--green)' }} />}
                     </button>
                   )
                 })}
               </div>
             ))}
-          </div>
-
-          <div className="flex flex-wrap gap-4 px-4 pb-3 pt-2" style={{ borderTop: '1px solid var(--border)' }}>
-            <div className="flex items-center gap-1.5 text-xs" style={{ color: 'var(--muted)' }}>
-              <span className="w-2 h-2 rounded-full inline-block" style={{ background: 'var(--green)' }} />
-              Has record
-            </div>
-            <div className="flex items-center gap-1.5 text-xs" style={{ color: 'var(--muted)' }}>
-              <span className="inline-block w-4 h-4" style={{ border: '1px solid rgba(245,166,35,0.3)', background: 'rgba(245,166,35,0.12)' }} />
-              Today
-            </div>
           </div>
         </div>
 
@@ -278,18 +312,15 @@ export default function HistoryPage() {
             </div>
           ) : (
             <div>
-              <div
-                className="px-4 py-4 sm:px-5 mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
-                style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderTop: `3px solid ${isPast ? 'var(--muted)' : 'var(--accent)'}` }}
-              >
+              <div className="px-4 py-4 sm:px-5 mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between" style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderTop: `3px solid ${isPast ? 'var(--muted)' : 'var(--accent)'}` }}>
                 <div>
                   <div className="font-condensed font-black text-lg sm:text-xl uppercase tracking-widest" style={{ color: isPast ? 'var(--text)' : 'var(--accent)' }}>
                     {fmtDate(selectedDate)}
                   </div>
                   <div className="flex flex-wrap items-center gap-2 mt-2">
-                    {isPast && <Tag color="var(--muted)" border="var(--border)" bg="transparent" label="Past" />}
-                    {isOffDay && !isPast && <Tag color="var(--accent2)" border="rgba(224,60,60,0.3)" bg="rgba(224,60,60,0.07)" label="Off Day" />}
-                    {isAdmin && isPast && <Tag color="var(--accent)" border="rgba(245,166,35,0.3)" bg="rgba(245,166,35,0.07)" label="Editable" />}
+                    {isPast && <Tag label="Past" color="var(--muted)" border="var(--border)" bg="transparent" />}
+                    {isOffDay && !isPast && <Tag label="Off Day" color="var(--accent2)" border="rgba(224,60,60,0.3)" bg="rgba(224,60,60,0.07)" />}
+                    {isAdmin && isPast && <Tag label="Editable" color="var(--accent)" border="rgba(245,166,35,0.3)" bg="rgba(245,166,35,0.07)" />}
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -309,15 +340,7 @@ export default function HistoryPage() {
               {saveMsg && <Msg type="success" text={saveMsg} />}
 
               <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', overflow: 'hidden' }}>
-                <div
-                  className="hidden sm:grid px-4 py-2.5 font-condensed font-bold text-xs tracking-widest uppercase"
-                  style={{
-                    gridTemplateColumns: canEdit ? '44px 1fr 88px 108px 52px' : '44px 1fr 88px 108px',
-                    background: '#0d1014',
-                    borderBottom: `2px solid ${isPast ? 'var(--muted)' : 'var(--accent)'}`,
-                    color: 'var(--muted)',
-                  }}
-                >
+                <div className="hidden sm:grid px-4 py-2.5 font-condensed font-bold text-xs tracking-widest uppercase" style={{ gridTemplateColumns: canEdit ? '44px 1fr 88px 108px 52px' : '44px 1fr 88px 108px', background: '#0d1014', borderBottom: `2px solid ${isPast ? 'var(--muted)' : 'var(--accent)'}`, color: 'var(--muted)' }}>
                   <div>#</div>
                   <div>Name</div>
                   <div>ID</div>
@@ -335,41 +358,17 @@ export default function HistoryPage() {
                   const isMarking = markingId === student.studentId
 
                   return (
-                    <div
-                      key={student._id}
-                      className="student-row px-4 py-3 sm:grid sm:items-center"
-                      style={{
-                        gridTemplateColumns: canEdit ? '44px 1fr 88px 108px 52px' : '44px 1fr 88px 108px',
-                        borderBottom: '1px solid var(--border)',
-                        borderLeft: isFirst && !isPast ? '3px solid var(--accent)' : '3px solid transparent',
-                        background: present ? 'rgba(34,197,94,0.04)' : 'transparent',
-                      }}
-                    >
+                    <div key={student._id} className="student-row px-4 py-3 sm:grid sm:items-center" style={{ gridTemplateColumns: canEdit ? '44px 1fr 88px 108px 52px' : '44px 1fr 88px 108px', borderBottom: '1px solid var(--border)', borderLeft: isFirst && !isPast ? '3px solid var(--accent)' : '3px solid transparent', background: present ? 'rgba(34,197,94,0.04)' : 'transparent' }}>
                       <div className="flex items-start justify-between gap-3 sm:contents">
                         <div className="font-condensed font-black text-xl leading-none" style={{ color: isFirst && !isPast ? 'var(--accent)' : 'var(--muted)' }}>
                           {String(idx + 1).padStart(2, '0')}
                         </div>
                         <div className="min-w-0 flex-1 sm:block">
-                          <div className="text-sm" style={{ color: 'var(--text)', fontWeight: isFirst && !isPast ? 700 : 400 }}>
-                            {student.name}
-                          </div>
-                          <div className="mt-1 sm:hidden font-condensed text-xs tracking-wider uppercase" style={{ color: 'var(--muted)' }}>
-                            {student.studentId}
-                          </div>
+                          <div className="text-sm" style={{ color: 'var(--text)', fontWeight: isFirst && !isPast ? 700 : 400 }}>{student.name}</div>
+                          <div className="mt-1 sm:hidden font-condensed text-xs tracking-wider uppercase" style={{ color: 'var(--muted)' }}>{student.studentId}</div>
                         </div>
                         {canEdit && (
-                          <button
-                            onClick={() => toggleAttendance(student.studentId)}
-                            disabled={isMarking}
-                            className="sm:hidden w-10 h-10 flex items-center justify-center transition-all font-condensed font-bold text-sm"
-                            style={{
-                              border: `1px solid ${present ? 'var(--green)' : 'var(--border)'}`,
-                              color: present ? 'var(--green)' : 'var(--muted)',
-                              background: present ? 'rgba(34,197,94,0.1)' : 'transparent',
-                              cursor: isMarking ? 'wait' : 'pointer',
-                              opacity: isMarking ? 0.5 : 1,
-                            }}
-                          >
+                          <button onClick={() => toggleAttendance(student.studentId)} disabled={isMarking} className="sm:hidden w-10 h-10 flex items-center justify-center transition-all font-condensed font-bold text-sm" style={{ border: `1px solid ${present ? 'var(--green)' : 'var(--border)'}`, color: present ? 'var(--green)' : 'var(--muted)', background: present ? 'rgba(34,197,94,0.1)' : 'transparent', cursor: isMarking ? 'wait' : 'pointer', opacity: isMarking ? 0.5 : 1 }}>
                             {isMarking ? '...' : present ? 'Yes' : 'No'}
                           </button>
                         )}
@@ -383,18 +382,7 @@ export default function HistoryPage() {
                         </span>
                       </div>
                       {canEdit && (
-                        <button
-                          onClick={() => toggleAttendance(student.studentId)}
-                          disabled={isMarking}
-                          className="hidden sm:flex w-9 h-9 items-center justify-center transition-all font-condensed font-bold text-sm"
-                          style={{
-                            border: `1px solid ${present ? 'var(--green)' : 'var(--border)'}`,
-                            color: present ? 'var(--green)' : 'var(--muted)',
-                            background: present ? 'rgba(34,197,94,0.1)' : 'transparent',
-                            cursor: isMarking ? 'wait' : 'pointer',
-                            opacity: isMarking ? 0.5 : 1,
-                          }}
-                        >
+                        <button onClick={() => toggleAttendance(student.studentId)} disabled={isMarking} className="hidden sm:flex w-9 h-9 items-center justify-center transition-all font-condensed font-bold text-sm" style={{ border: `1px solid ${present ? 'var(--green)' : 'var(--border)'}`, color: present ? 'var(--green)' : 'var(--muted)', background: present ? 'rgba(34,197,94,0.1)' : 'transparent', cursor: isMarking ? 'wait' : 'pointer', opacity: isMarking ? 0.5 : 1 }}>
                           {isMarking ? '...' : present ? 'Yes' : 'No'}
                         </button>
                       )}
@@ -402,12 +390,6 @@ export default function HistoryPage() {
                   )
                 })}
               </div>
-
-              {!isAdmin && (
-                <div className="mt-3 text-center font-condensed text-xs tracking-widest uppercase" style={{ color: 'var(--muted)' }}>
-                  View only. Admin login is required to edit.
-                </div>
-              )}
             </div>
           )}
         </div>
@@ -434,13 +416,7 @@ function StatChip({ label, value, color }) {
 
 function ABtn({ onClick, label, color }) {
   return (
-    <button
-      onClick={onClick}
-      className="flex-1 sm:flex-none font-condensed font-bold text-xs tracking-widest uppercase px-3 py-2 transition-all"
-      style={{ border: `1px solid ${color}`, color, background: 'transparent', cursor: 'pointer' }}
-      onMouseEnter={e => { e.currentTarget.style.background = `${color}18` }}
-      onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
-    >
+    <button onClick={onClick} className="flex-1 sm:flex-none font-condensed font-bold text-xs tracking-widest uppercase px-3 py-2 transition-all" style={{ border: `1px solid ${color}`, color, background: 'transparent', cursor: 'pointer' }}>
       {label}
     </button>
   )
@@ -449,14 +425,7 @@ function ABtn({ onClick, label, color }) {
 function Msg({ type, text }) {
   const isErr = type === 'error'
   return (
-    <div
-      className="px-3 py-2 text-xs font-medium tracking-wide mb-3"
-      style={{
-        background: isErr ? 'rgba(224,60,60,0.1)' : 'rgba(34,197,94,0.08)',
-        border: `1px solid ${isErr ? 'rgba(224,60,60,0.3)' : 'rgba(34,197,94,0.3)'}`,
-        color: isErr ? 'var(--accent2)' : 'var(--green)',
-      }}
-    >
+    <div className="px-3 py-2 text-xs font-medium tracking-wide mb-3" style={{ background: isErr ? 'rgba(224,60,60,0.1)' : 'rgba(34,197,94,0.08)', border: `1px solid ${isErr ? 'rgba(224,60,60,0.3)' : 'rgba(34,197,94,0.3)'}`, color: isErr ? 'var(--accent2)' : 'var(--green)' }}>
       {text}
     </div>
   )
