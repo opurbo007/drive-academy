@@ -1,7 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/hooks/useAuth'
-import { enqueueAttendanceMutation, getPendingSyncCount, readOfflineSnapshot, saveOfflineSnapshot } from '@/lib/offlineSync'
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
@@ -24,25 +23,7 @@ export default function HomePage() {
   const [loading, setLoading] = useState(true)
   const [markingId, setMarkingId] = useState(null)
   const [error, setError] = useState('')
-  const [notice, setNotice] = useState('')
-  const [noticeType, setNoticeType] = useState('info')
   const [lastUpdated, setLastUpdated] = useState(null)
-
-  const showNotice = (text, type = 'info', ms = 3200) => {
-    setNotice(text)
-    setNoticeType(type)
-    if (ms > 0) setTimeout(() => setNotice(''), ms)
-  }
-
-  const applySnapshot = (snapshot) => {
-    const value = snapshot?.value
-    if (!value) return false
-    setStudents(value.students || [])
-    setAttendance(value.attendance || {})
-    setIsOffDay(value.isOffDay || false)
-    setLastUpdated(snapshot.savedAt ? new Date(snapshot.savedAt) : null)
-    return true
-  }
 
   const fetchData = useCallback(async () => {
     try {
@@ -52,25 +33,13 @@ export default function HomePage() {
       ])
       const studentsData = await studentsRes.json()
       const attendanceData = await attendanceRes.json()
-      const snapshot = {
-        students: studentsData.students || [],
-        isOffDay: studentsData.isOffDay || false,
-        attendance: attendanceData.attendance || {},
-      }
-
-      setStudents(snapshot.students)
-      setIsOffDay(snapshot.isOffDay)
-      setAttendance(snapshot.attendance)
+      setStudents(studentsData.students || [])
+      setIsOffDay(studentsData.isOffDay || false)
+      setAttendance(attendanceData.attendance || {})
       setLastUpdated(new Date())
       setError('')
-      saveOfflineSnapshot(`today:${date}`, snapshot)
     } catch {
-      const snapshot = readOfflineSnapshot(`today:${date}`)
-      if (!applySnapshot(snapshot)) {
-        setError('Failed to load data')
-      } else {
-        showNotice('Loaded the latest cached data for offline use.', 'info')
-      }
+      setError('Failed to load data')
     } finally {
       setLoading(false)
     }
@@ -82,59 +51,11 @@ export default function HomePage() {
     return () => clearInterval(interval)
   }, [fetchData])
 
-  useEffect(() => {
-    const handleOnline = () => {
-      if (getPendingSyncCount() > 0) {
-        showNotice('Back online. Pending attendance changes will sync automatically.', 'success')
-      }
-      fetchData()
-    }
-
-    window.addEventListener('online', handleOnline)
-    return () => window.removeEventListener('online', handleOnline)
-  }, [fetchData])
-
-  const saveTodaySnapshot = (nextAttendance) => {
-    saveOfflineSnapshot(`today:${date}`, {
-      students,
-      isOffDay,
-      attendance: nextAttendance,
-    })
-  }
-
-  const queueSingleChange = (studentId, present) => {
-    const nextAttendance = { ...attendance, [studentId]: present }
-    setAttendance(nextAttendance)
-    saveTodaySnapshot(nextAttendance)
-    enqueueAttendanceMutation({ type: 'mark', payload: { date, studentId, present } })
-    showNotice('Saved offline. It will sync when the phone is online.', 'success')
-  }
-
-  const queueBulkChange = (present) => {
-    const nextAttendance = {}
-    students.forEach(student => {
-      nextAttendance[student.studentId] = present
-    })
-    setAttendance(nextAttendance)
-    saveTodaySnapshot(nextAttendance)
-    enqueueAttendanceMutation({
-      type: 'mark-all',
-      payload: { date, studentIds: students.map(student => student.studentId), present },
-    })
-    showNotice('Bulk update saved offline. It will sync when the phone is online.', 'success')
-  }
-
   const toggleAttendance = async (studentId) => {
     if (!isAdmin || isOffDay) return
-    const present = !attendance[studentId]
-
-    if (!navigator.onLine) {
-      queueSingleChange(studentId, present)
-      return
-    }
-
     setMarkingId(studentId)
     try {
+      const present = !attendance[studentId]
       const res = await authFetch('/api/attendance/mark', {
         method: 'POST',
         body: JSON.stringify({ date, studentId, present }),
@@ -143,16 +64,10 @@ export default function HomePage() {
         const data = await res.json()
         throw new Error(data.error)
       }
-      const nextAttendance = { ...attendance, [studentId]: present }
-      setAttendance(nextAttendance)
-      saveTodaySnapshot(nextAttendance)
+      setAttendance(prev => ({ ...prev, [studentId]: present }))
     } catch (e) {
-      if (!navigator.onLine) {
-        queueSingleChange(studentId, present)
-      } else {
-        setError(e.message || 'Failed to update')
-        setTimeout(() => setError(''), 3000)
-      }
+      setError(e.message || 'Failed to update')
+      setTimeout(() => setError(''), 3000)
     } finally {
       setMarkingId(null)
     }
@@ -160,14 +75,8 @@ export default function HomePage() {
 
   const markAll = async (present) => {
     if (!isAdmin || isOffDay) return
-    const studentIds = students.map(student => student.studentId)
-
-    if (!navigator.onLine) {
-      queueBulkChange(present)
-      return
-    }
-
     try {
+      const studentIds = students.map(student => student.studentId)
       const res = await authFetch('/api/attendance/mark-all', {
         method: 'POST',
         body: JSON.stringify({ date, studentIds, present }),
@@ -181,14 +90,9 @@ export default function HomePage() {
         nextAttendance[id] = present
       })
       setAttendance(nextAttendance)
-      saveTodaySnapshot(nextAttendance)
     } catch (e) {
-      if (!navigator.onLine) {
-        queueBulkChange(present)
-      } else {
-        setError(e.message || 'Failed to update')
-        setTimeout(() => setError(''), 3000)
-      }
+      setError(e.message || 'Failed to update')
+      setTimeout(() => setError(''), 3000)
     }
   }
 
@@ -232,7 +136,6 @@ export default function HomePage() {
         </div>
       </div>
 
-      {notice && <Banner type={noticeType} text={notice} />}
       {error && <Banner type="error" text={error} />}
 
       {isOffDay && (
@@ -282,11 +185,7 @@ export default function HomePage() {
           const isMarking = markingId === student.studentId
 
           return (
-            <div
-              key={student._id}
-              className="student-row px-4 py-3 sm:grid sm:items-center"
-              style={{ gridTemplateColumns: isAdmin ? '48px 1fr 90px 110px 52px' : '48px 1fr 90px 110px', borderBottom: '1px solid var(--border)', borderLeft: isFirst ? '3px solid var(--accent)' : '3px solid transparent', background: present ? 'rgba(34,197,94,0.04)' : 'transparent' }}
-            >
+            <div key={student._id} className="student-row px-4 py-3 sm:grid sm:items-center" style={{ gridTemplateColumns: isAdmin ? '48px 1fr 90px 110px 52px' : '48px 1fr 90px 110px', borderBottom: '1px solid var(--border)', borderLeft: isFirst ? '3px solid var(--accent)' : '3px solid transparent', background: present ? 'rgba(34,197,94,0.04)' : 'transparent' }}>
               <div className="flex items-start justify-between gap-3 sm:contents">
                 <div className="font-condensed font-black text-2xl leading-none sm:block" style={{ color: isFirst ? 'var(--accent)' : 'var(--muted)' }}>
                   {String(idx + 1).padStart(2, '0')}
@@ -298,12 +197,7 @@ export default function HomePage() {
                   </div>
                 </div>
                 {isAdmin && (
-                  <button
-                    onClick={() => toggleAttendance(student.studentId)}
-                    disabled={isOffDay || isMarking}
-                    className="sm:hidden w-10 h-10 flex items-center justify-center transition-all font-condensed font-bold text-sm shrink-0"
-                    style={{ border: `1px solid ${present ? 'var(--green)' : 'var(--border)'}`, color: present ? 'var(--green)' : 'var(--muted)', background: present ? 'rgba(34,197,94,0.1)' : 'transparent', cursor: isOffDay ? 'not-allowed' : 'pointer', opacity: isMarking ? 0.5 : 1 }}
-                  >
+                  <button onClick={() => toggleAttendance(student.studentId)} disabled={isOffDay || isMarking} className="sm:hidden w-10 h-10 flex items-center justify-center transition-all font-condensed font-bold text-sm shrink-0" style={{ border: `1px solid ${present ? 'var(--green)' : 'var(--border)'}`, color: present ? 'var(--green)' : 'var(--muted)', background: present ? 'rgba(34,197,94,0.1)' : 'transparent', cursor: isOffDay ? 'not-allowed' : 'pointer', opacity: isMarking ? 0.5 : 1 }}>
                     {isMarking ? '...' : present ? 'Yes' : 'No'}
                   </button>
                 )}
@@ -319,12 +213,7 @@ export default function HomePage() {
               </div>
               {isAdmin && (
                 <div className="hidden sm:block">
-                  <button
-                    onClick={() => toggleAttendance(student.studentId)}
-                    disabled={isOffDay || isMarking}
-                    className="w-9 h-9 flex items-center justify-center transition-all font-condensed font-bold text-sm"
-                    style={{ border: `1px solid ${present ? 'var(--green)' : 'var(--border)'}`, color: present ? 'var(--green)' : 'var(--muted)', background: present ? 'rgba(34,197,94,0.1)' : 'transparent', cursor: isOffDay ? 'not-allowed' : 'pointer', opacity: isMarking ? 0.5 : 1 }}
-                  >
+                  <button onClick={() => toggleAttendance(student.studentId)} disabled={isOffDay || isMarking} className="w-9 h-9 flex items-center justify-center transition-all font-condensed font-bold text-sm" style={{ border: `1px solid ${present ? 'var(--green)' : 'var(--border)'}`, color: present ? 'var(--green)' : 'var(--muted)', background: present ? 'rgba(34,197,94,0.1)' : 'transparent', cursor: isOffDay ? 'not-allowed' : 'pointer', opacity: isMarking ? 0.5 : 1 }}>
                     {isMarking ? '...' : present ? 'Yes' : 'No'}
                   </button>
                 </div>
@@ -346,9 +235,7 @@ export default function HomePage() {
 function Banner({ type, text }) {
   const colors = type === 'error'
     ? { background: 'rgba(224,60,60,0.1)', border: 'rgba(224,60,60,0.3)', color: 'var(--accent2)' }
-    : type === 'success'
-      ? { background: 'rgba(34,197,94,0.08)', border: 'rgba(34,197,94,0.3)', color: 'var(--green)' }
-      : { background: 'rgba(245,166,35,0.08)', border: 'rgba(245,166,35,0.25)', color: 'var(--accent)' }
+    : { background: 'rgba(245,166,35,0.08)', border: 'rgba(245,166,35,0.25)', color: 'var(--accent)' }
 
   return (
     <div className="mb-4 px-4 py-3 text-sm" style={{ background: colors.background, border: `1px solid ${colors.border}`, color: colors.color }}>
@@ -367,13 +254,7 @@ function StatChip({ label, value, color }) {
 
 function ActionBtn({ onClick, label, color }) {
   return (
-    <button
-      onClick={onClick}
-      className="flex-1 sm:flex-none font-condensed font-bold text-xs tracking-widest uppercase px-3 py-2 transition-all"
-      style={{ border: `1px solid ${color}`, color, background: 'transparent', cursor: 'pointer' }}
-      onMouseEnter={e => { e.currentTarget.style.background = `${color}18` }}
-      onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
-    >
+    <button onClick={onClick} className="flex-1 sm:flex-none font-condensed font-bold text-xs tracking-widest uppercase px-3 py-2 transition-all" style={{ border: `1px solid ${color}`, color, background: 'transparent', cursor: 'pointer' }} onMouseEnter={e => { e.currentTarget.style.background = `${color}18` }} onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}>
       {label}
     </button>
   )

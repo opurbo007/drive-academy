@@ -1,7 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/hooks/useAuth'
-import { enqueueAttendanceMutation, readOfflineSnapshot, saveOfflineSnapshot } from '@/lib/offlineSync'
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const MONTH_FULL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
@@ -70,25 +69,11 @@ export default function HistoryPage() {
     try {
       const res = await fetch(`/api/attendance/by-date?date=${date}`)
       const data = await res.json()
-      const snapshot = {
-        students: data.students || [],
-        attendance: data.attendance || {},
-        isOffDay: data.isOffDay || false,
-      }
-      setStudents(snapshot.students)
-      setAttendance(snapshot.attendance)
-      setIsOffDay(snapshot.isOffDay)
-      saveOfflineSnapshot(`history:${date}`, snapshot)
+      setStudents(data.students || [])
+      setAttendance(data.attendance || {})
+      setIsOffDay(data.isOffDay || false)
     } catch {
-      const snapshot = readOfflineSnapshot(`history:${date}`)
-      if (snapshot?.value) {
-        setStudents(snapshot.value.students || [])
-        setAttendance(snapshot.value.attendance || {})
-        setIsOffDay(snapshot.value.isOffDay || false)
-        flash(setSaveMsg, 'Loaded cached attendance for offline use.')
-      } else {
-        setError('Failed to load attendance for this date')
-      }
+      setError('Failed to load attendance for this date')
     } finally {
       setDateLoading(false)
     }
@@ -99,33 +84,14 @@ export default function HistoryPage() {
     loadDate(date)
   }
 
-  const updateCachedHistory = (nextAttendance) => {
-    if (!selectedDate) return
-    saveOfflineSnapshot(`history:${selectedDate}`, {
-      students,
-      attendance: nextAttendance,
-      isOffDay,
-    })
-  }
-
   const toggleAttendance = async (studentId) => {
     if (!isAdmin) return
     const isPast = selectedDate < today
     if (!isPast && isOffDay) return
 
-    const present = !attendance[studentId]
-    if (!navigator.onLine) {
-      const nextAttendance = { ...attendance, [studentId]: present }
-      setAttendance(nextAttendance)
-      updateCachedHistory(nextAttendance)
-      enqueueAttendanceMutation({ type: 'mark', payload: { date: selectedDate, studentId, present } })
-      flash(setSaveMsg, 'Saved offline. It will sync automatically later.')
-      setRecordDates(prev => new Set([...prev, selectedDate]))
-      return
-    }
-
     setMarkingId(studentId)
     try {
+      const present = !attendance[studentId]
       const res = await authFetch('/api/attendance/mark', {
         method: 'POST',
         body: JSON.stringify({ date: selectedDate, studentId, present }),
@@ -134,21 +100,11 @@ export default function HistoryPage() {
         const data = await res.json()
         throw new Error(data.error)
       }
-      const nextAttendance = { ...attendance, [studentId]: present }
-      setAttendance(nextAttendance)
-      updateCachedHistory(nextAttendance)
+      setAttendance(prev => ({ ...prev, [studentId]: present }))
       setRecordDates(prev => new Set([...prev, selectedDate]))
       flash(setSaveMsg, 'Saved')
     } catch (e) {
-      if (!navigator.onLine) {
-        const nextAttendance = { ...attendance, [studentId]: present }
-        setAttendance(nextAttendance)
-        updateCachedHistory(nextAttendance)
-        enqueueAttendanceMutation({ type: 'mark', payload: { date: selectedDate, studentId, present } })
-        flash(setSaveMsg, 'Saved offline. It will sync automatically later.')
-      } else {
-        flash(setError, e.message || 'Failed to save')
-      }
+      flash(setError, e.message || 'Failed to save')
     } finally {
       setMarkingId(null)
     }
@@ -156,22 +112,8 @@ export default function HistoryPage() {
 
   const markAll = async (present) => {
     if (!isAdmin) return
-    const studentIds = students.map(student => student.studentId)
-
-    if (!navigator.onLine) {
-      const nextAttendance = {}
-      studentIds.forEach(id => {
-        nextAttendance[id] = present
-      })
-      setAttendance(nextAttendance)
-      updateCachedHistory(nextAttendance)
-      enqueueAttendanceMutation({ type: 'mark-all', payload: { date: selectedDate, studentIds, present } })
-      setRecordDates(prev => new Set([...prev, selectedDate]))
-      flash(setSaveMsg, 'Bulk update saved offline. It will sync automatically later.')
-      return
-    }
-
     try {
+      const studentIds = students.map(student => student.studentId)
       const res = await authFetch('/api/attendance/mark-all', {
         method: 'POST',
         body: JSON.stringify({ date: selectedDate, studentIds, present }),
@@ -185,23 +127,10 @@ export default function HistoryPage() {
         nextAttendance[id] = present
       })
       setAttendance(nextAttendance)
-      updateCachedHistory(nextAttendance)
       setRecordDates(prev => new Set([...prev, selectedDate]))
       flash(setSaveMsg, 'All updated')
     } catch (e) {
-      if (!navigator.onLine) {
-        const nextAttendance = {}
-        studentIds.forEach(id => {
-          nextAttendance[id] = present
-        })
-        setAttendance(nextAttendance)
-        updateCachedHistory(nextAttendance)
-        enqueueAttendanceMutation({ type: 'mark-all', payload: { date: selectedDate, studentIds, present } })
-        setRecordDates(prev => new Set([...prev, selectedDate]))
-        flash(setSaveMsg, 'Bulk update saved offline. It will sync automatically later.')
-      } else {
-        flash(setError, e.message || 'Failed')
-      }
+      flash(setError, e.message || 'Failed')
     }
   }
 
@@ -278,13 +207,7 @@ export default function HistoryPage() {
                   const hasRecord = recordDates.has(dateStr)
 
                   return (
-                    <button
-                      key={dayIndex}
-                      disabled={isFuture}
-                      onClick={() => !isFuture && selectDate(dateStr)}
-                      className="relative flex flex-col items-center justify-center h-11 sm:h-10 transition-all font-condensed font-bold text-sm"
-                      style={{ cursor: isFuture ? 'not-allowed' : 'pointer', background: isSelected ? 'var(--accent)' : isToday ? 'rgba(245,166,35,0.12)' : 'transparent', border: `1px solid ${isSelected ? 'var(--accent)' : isToday ? 'rgba(245,166,35,0.3)' : 'transparent'}`, color: isSelected ? '#000' : isFuture ? 'var(--border)' : isToday ? 'var(--accent)' : 'var(--text)' }}
-                    >
+                    <button key={dayIndex} disabled={isFuture} onClick={() => !isFuture && selectDate(dateStr)} className="relative flex flex-col items-center justify-center h-11 sm:h-10 transition-all font-condensed font-bold text-sm" style={{ cursor: isFuture ? 'not-allowed' : 'pointer', background: isSelected ? 'var(--accent)' : isToday ? 'rgba(245,166,35,0.12)' : 'transparent', border: `1px solid ${isSelected ? 'var(--accent)' : isToday ? 'rgba(245,166,35,0.3)' : 'transparent'}`, color: isSelected ? '#000' : isFuture ? 'var(--border)' : isToday ? 'var(--accent)' : 'var(--text)' }}>
                       {day}
                       {hasRecord && !isSelected && <span className="absolute bottom-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full" style={{ background: 'var(--green)' }} />}
                     </button>

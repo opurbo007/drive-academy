@@ -3,20 +3,7 @@ const withPWA = require('next-pwa')({
   register: true,
   skipWaiting: true,
   disable: process.env.NODE_ENV === 'development',
-  fallbacks: {
-    document: '/_offline',
-  },
   runtimeCaching: [
-    {
-      urlPattern: ({ request }) => request.mode === 'navigate',
-      handler: 'NetworkFirst',
-      options: {
-        cacheName: 'pages-cache',
-        networkTimeoutSeconds: 5,
-        expiration: { maxEntries: 32, maxAgeSeconds: 7 * 24 * 60 * 60 },
-        cacheableResponse: { statuses: [0, 200] },
-      },
-    },
     {
       urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
       handler: 'CacheFirst',
@@ -32,26 +19,6 @@ const withPWA = require('next-pwa')({
       options: {
         cacheName: 'gstatic-fonts-cache',
         expiration: { maxEntries: 10, maxAgeSeconds: 365 * 24 * 60 * 60 },
-        cacheableResponse: { statuses: [0, 200] },
-      },
-    },
-    {
-      urlPattern: /^\/api\/students.*/i,
-      handler: 'NetworkFirst',
-      options: {
-        cacheName: 'api-students-cache',
-        networkTimeoutSeconds: 5,
-        expiration: { maxEntries: 5, maxAgeSeconds: 24 * 60 * 60 },
-        cacheableResponse: { statuses: [0, 200] },
-      },
-    },
-    {
-      urlPattern: /^\/api\/attendance.*/i,
-      handler: 'NetworkFirst',
-      options: {
-        cacheName: 'api-attendance-cache',
-        networkTimeoutSeconds: 5,
-        expiration: { maxEntries: 10, maxAgeSeconds: 24 * 60 * 60 },
         cacheableResponse: { statuses: [0, 200] },
       },
     },
