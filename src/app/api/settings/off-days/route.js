@@ -9,9 +9,10 @@ export async function PUT(request) {
 
   try {
     const { offDays } = await request.json()
-    if (!Array.isArray(offDays))
+    if (!Array.isArray(offDays)) {
       return Response.json({ error: 'offDays must be an array' }, { status: 400 })
-    await setOffDays(offDays)
+    }
+    await setOffDays(adminOrRes.side, offDays)
     return Response.json({ offDays })
   } catch (err) {
     return Response.json({ error: err.message }, { status: 500 })

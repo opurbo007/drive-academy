@@ -1,6 +1,9 @@
 'use client'
-import { useState, useEffect, useCallback } from 'react'
+import { Suspense, useCallback, useEffect, useState } from 'react'
+import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 import { useAuth } from '@/hooks/useAuth'
+import { getSideLabel, getSideMeta, normalizeSide } from '@/lib/sides'
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const MONTH_FULL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
@@ -11,8 +14,8 @@ function todayStr() {
 }
 
 function fmtDate(str) {
-  const d = new Date(`${str}T00:00:00`)
-  return `${DAY_NAMES[d.getDay()]}, ${d.getDate()} ${MONTH_SHORT[d.getMonth()]} ${d.getFullYear()}`
+  const date = new Date(`${str}T00:00:00`)
+  return `${DAY_NAMES[date.getDay()]}, ${date.getDate()} ${MONTH_SHORT[date.getMonth()]} ${date.getFullYear()}`
 }
 
 function daysInMonth(year, month) {
@@ -23,18 +26,36 @@ function buildCalendarWeeks(year, month) {
   const first = new Date(year, month, 1).getDay()
   const days = daysInMonth(year, month)
   const cells = []
-
-  for (let i = 0; i < first; i += 1) cells.push(null)
+  for (let index = 0; index < first; index += 1) cells.push(null)
   for (let day = 1; day <= days; day += 1) cells.push(day)
   while (cells.length % 7 !== 0) cells.push(null)
-
   const weeks = []
-  for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7))
+  for (let index = 0; index < cells.length; index += 7) weeks.push(cells.slice(index, index + 7))
   return weeks
 }
 
+function normalizeStatus(value) {
+  return typeof value === 'boolean' ? value : null
+}
+
+function getNextStudentId(students, attendance) {
+  return students.find(student => normalizeStatus(attendance[student.studentId]) === null)?._id || null
+}
+
 export default function HistoryPage() {
-  const { isAdmin, authFetch } = useAuth()
+  return (
+    <Suspense fallback={null}>
+      <HistoryPageContent />
+    </Suspense>
+  )
+}
+
+function HistoryPageContent() {
+  const { isAdmin, authFetch, user } = useAuth()
+  const searchParams = useSearchParams()
+  const side = normalizeSide(searchParams.get('side'))
+  const sideMeta = side ? getSideMeta(side) : null
+
   const today = todayStr()
   const nowDate = new Date()
 
@@ -50,87 +71,94 @@ export default function HistoryPage() {
   const [saveMsg, setSaveMsg] = useState('')
   const [recordDates, setRecordDates] = useState(new Set())
 
+  const canEdit = isAdmin && user?.side === side
+
   const flash = (setter, message, ms = 2500) => {
     setter(message)
     setTimeout(() => setter(''), ms)
   }
 
   useEffect(() => {
-    fetch('/api/attendance/dates')
-      .then(res => res.json())
+    if (!side) return
+    fetch(`/api/attendance/dates?side=${side}`)
+      .then(response => response.json())
       .then(data => setRecordDates(new Set(data.dates || [])))
       .catch(() => {})
-  }, [])
+  }, [side])
 
-  const loadDate = useCallback(async (date) => {
+  const loadDate = useCallback(async date => {
+    if (!side) return
     setDateLoading(true)
     setError('')
     setSaveMsg('')
     try {
-      const res = await fetch(`/api/attendance/by-date?date=${date}`)
-      const data = await res.json()
+      const response = await fetch(`/api/attendance/by-date?date=${date}&side=${side}`)
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Failed to load attendance')
       setStudents(data.students || [])
       setAttendance(data.attendance || {})
       setIsOffDay(data.isOffDay || false)
-    } catch {
-      setError('Failed to load attendance for this date')
+    } catch (requestError) {
+      setError(requestError.message || 'Failed to load attendance')
     } finally {
       setDateLoading(false)
     }
-  }, [])
+  }, [side])
 
-  const selectDate = (date) => {
+  const selectDate = date => {
     setSelectedDate(date)
     loadDate(date)
   }
 
-  const toggleAttendance = async (studentId) => {
-    if (!isAdmin) return
+  const setAttendanceStatus = async (studentId, nextStatus) => {
+    if (!canEdit) return
     const isPast = selectedDate < today
     if (!isPast && isOffDay) return
 
     setMarkingId(studentId)
     try {
-      const present = !attendance[studentId]
-      const res = await authFetch('/api/attendance/mark', {
+      const response = await authFetch(`/api/attendance/mark?side=${side}`, {
         method: 'POST',
-        body: JSON.stringify({ date: selectedDate, studentId, present }),
+        body: JSON.stringify({ date: selectedDate, studentId, present: nextStatus }),
       })
-      if (!res.ok) {
-        const data = await res.json()
-        throw new Error(data.error)
-      }
-      setAttendance(prev => ({ ...prev, [studentId]: present }))
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Failed to save')
+
+      setAttendance(prev => {
+        const next = { ...prev }
+        if (nextStatus === null) delete next[studentId]
+        else next[studentId] = nextStatus
+        return next
+      })
       setRecordDates(prev => new Set([...prev, selectedDate]))
       flash(setSaveMsg, 'Saved')
-    } catch (e) {
-      flash(setError, e.message || 'Failed to save')
+    } catch (requestError) {
+      flash(setError, requestError.message || 'Failed to save')
     } finally {
       setMarkingId(null)
     }
   }
 
-  const markAll = async (present) => {
-    if (!isAdmin) return
+  const markAll = async present => {
+    if (!canEdit) return
     try {
       const studentIds = students.map(student => student.studentId)
-      const res = await authFetch('/api/attendance/mark-all', {
+      const response = await authFetch(`/api/attendance/mark-all?side=${side}`, {
         method: 'POST',
         body: JSON.stringify({ date: selectedDate, studentIds, present }),
       })
-      if (!res.ok) {
-        const data = await res.json()
-        throw new Error(data.error)
-      }
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Failed')
+
       const nextAttendance = {}
-      studentIds.forEach(id => {
-        nextAttendance[id] = present
+      studentIds.forEach(studentId => {
+        nextAttendance[studentId] = present
       })
       setAttendance(nextAttendance)
       setRecordDates(prev => new Set([...prev, selectedDate]))
       flash(setSaveMsg, 'All updated')
-    } catch (e) {
-      flash(setError, e.message || 'Failed')
+    } catch (requestError) {
+      flash(setError, requestError.message || 'Failed')
     }
   }
 
@@ -154,192 +182,191 @@ export default function HistoryPage() {
     }
   }
 
+  if (!sideMeta) {
+    return (
+      <div className="fade-in space-y-4">
+        <div className="mobile-card p-5" style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderTop: '3px solid var(--accent)' }}>
+          <div className="font-condensed font-black text-2xl tracking-[0.18em] uppercase" style={{ color: 'var(--accent)' }}>
+            History
+          </div>
+          <p className="text-sm mt-2" style={{ color: 'var(--muted)' }}>
+            Open Abdul or Saidul first to view attendance history.
+          </p>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <Link href="/history?side=abdul" className="mobile-card text-center font-condensed font-black text-sm tracking-widest uppercase px-4 py-4" style={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)' }}>
+            Abdul
+          </Link>
+          <Link href="/history?side=saidul" className="mobile-card text-center font-condensed font-black text-sm tracking-widest uppercase px-4 py-4" style={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)' }}>
+            Saidul
+          </Link>
+        </div>
+      </div>
+    )
+  }
+
   const isCurrentMonth = calYear === nowDate.getFullYear() && calMonth === nowDate.getMonth()
   const weeks = buildCalendarWeeks(calYear, calMonth)
-  const presentCount = students.filter(student => attendance[student.studentId]).length
-  const absentCount = students.length - presentCount
+  const presentCount = students.filter(student => normalizeStatus(attendance[student.studentId]) === true).length
+  const absentCount = students.filter(student => normalizeStatus(attendance[student.studentId]) === false).length
+  const blankCount = students.length - presentCount - absentCount
   const isPast = selectedDate && selectedDate < today
-  const canEdit = isAdmin && selectedDate && (isPast || !isOffDay)
+  const editThisDate = canEdit && selectedDate && (isPast || !isOffDay)
+  const nextStudentId = getNextStudentId(students, attendance)
 
   return (
-    <div className="fade-in">
-      <div className="mb-5 sm:mb-6">
-        <h1 className="font-condensed font-black text-3xl uppercase tracking-widest" style={{ color: 'var(--accent)' }}>
-          Attendance History
+    <div className="fade-in space-y-4">
+      <div className="mobile-card px-5 py-5" style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderTop: `3px solid ${sideMeta.accent}` }}>
+        <div className="font-condensed font-black text-xs tracking-[0.28em] uppercase" style={{ color: 'var(--muted)' }}>
+          {getSideLabel(side)}
+        </div>
+        <h1 className="font-condensed font-black text-3xl tracking-[0.14em] uppercase mt-2" style={{ color: sideMeta.accent }}>
+          History
         </h1>
-        <p className="text-xs tracking-widest uppercase mt-1" style={{ color: 'var(--muted)' }}>
-          {isAdmin ? 'Select a date to view or edit attendance' : 'Select a date to view past attendance'}
+        <p className="text-xs tracking-[0.22em] uppercase mt-2" style={{ color: 'var(--muted)' }}>
+          {canEdit ? 'View or edit old attendance' : 'View past attendance'}
         </p>
       </div>
 
-      <div className="grid gap-5 sm:gap-6 lg:grid-cols-[minmax(0,340px)_minmax(0,1fr)]">
-        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
-          <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: '1px solid var(--border)', background: '#0d1014' }}>
-            <button onClick={prevMonth} className="font-condensed font-bold text-sm px-3 py-2 transition-all" style={{ color: 'var(--muted)', background: 'transparent', border: '1px solid var(--border)', cursor: 'pointer' }}>
-              Prev
-            </button>
-            <span className="font-condensed font-bold text-sm tracking-widest uppercase text-center" style={{ color: 'var(--text)' }}>
-              {MONTH_FULL[calMonth]} {calYear}
-            </span>
-            <button onClick={nextMonth} disabled={isCurrentMonth} className="font-condensed font-bold text-sm px-3 py-2 transition-all" style={{ color: isCurrentMonth ? 'var(--border)' : 'var(--muted)', background: 'transparent', border: '1px solid var(--border)', cursor: isCurrentMonth ? 'not-allowed' : 'pointer' }}>
-              Next
-            </button>
-          </div>
-
-          <div className="grid grid-cols-7 px-2 sm:px-3 pt-3 pb-1">
-            {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day, i) => (
-              <div key={i} className="text-center font-condensed font-bold text-xs tracking-widest" style={{ color: 'var(--muted)' }}>
-                {day}
-              </div>
-            ))}
-          </div>
-
-          <div className="px-2 sm:px-3 pb-3 space-y-1">
-            {weeks.map((week, weekIndex) => (
-              <div key={weekIndex} className="grid grid-cols-7 gap-1">
-                {week.map((day, dayIndex) => {
-                  if (!day) return <div key={dayIndex} />
-
-                  const dateStr = `${calYear}-${String(calMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
-                  const isToday = dateStr === today
-                  const isFuture = dateStr > today
-                  const isSelected = dateStr === selectedDate
-                  const hasRecord = recordDates.has(dateStr)
-
-                  return (
-                    <button key={dayIndex} disabled={isFuture} onClick={() => !isFuture && selectDate(dateStr)} className="relative flex flex-col items-center justify-center h-11 sm:h-10 transition-all font-condensed font-bold text-sm" style={{ cursor: isFuture ? 'not-allowed' : 'pointer', background: isSelected ? 'var(--accent)' : isToday ? 'rgba(245,166,35,0.12)' : 'transparent', border: `1px solid ${isSelected ? 'var(--accent)' : isToday ? 'rgba(245,166,35,0.3)' : 'transparent'}`, color: isSelected ? '#000' : isFuture ? 'var(--border)' : isToday ? 'var(--accent)' : 'var(--text)' }}>
-                      {day}
-                      {hasRecord && !isSelected && <span className="absolute bottom-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full" style={{ background: 'var(--green)' }} />}
-                    </button>
-                  )
-                })}
-              </div>
-            ))}
-          </div>
+      <div className="mobile-card" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
+        <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: '1px solid var(--border)', background: '#0d1014' }}>
+          <button onClick={prevMonth} className="mobile-card font-condensed font-bold text-sm px-3 py-2" style={{ color: 'var(--muted)', background: 'transparent', border: '1px solid var(--border)' }}>
+            Prev
+          </button>
+          <span className="font-condensed font-bold text-sm tracking-[0.18em] uppercase text-center" style={{ color: 'var(--text)' }}>
+            {MONTH_FULL[calMonth]} {calYear}
+          </span>
+          <button onClick={nextMonth} disabled={isCurrentMonth} className="mobile-card font-condensed font-bold text-sm px-3 py-2" style={{ color: isCurrentMonth ? 'var(--border)' : 'var(--muted)', background: 'transparent', border: '1px solid var(--border)' }}>
+            Next
+          </button>
         </div>
 
-        <div>
-          {!selectedDate ? (
-            <div className="flex items-center justify-center h-56 sm:h-64" style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderLeft: '3px solid var(--border)' }}>
-              <div className="text-center">
-                <div className="font-condensed font-bold text-sm tracking-widest uppercase" style={{ color: 'var(--muted)' }}>
-                  Select a date
-                </div>
-              </div>
+        <div className="grid grid-cols-7 px-3 pt-3 pb-1">
+          {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day, index) => (
+            <div key={`${day}-${index}`} className="text-center font-condensed font-bold text-xs tracking-[0.18em]" style={{ color: 'var(--muted)' }}>
+              {day}
             </div>
-          ) : dateLoading ? (
-            <div className="flex items-center justify-center h-56 sm:h-64" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
-              <div className="font-condensed text-sm tracking-widest uppercase animate-pulse" style={{ color: 'var(--muted)' }}>
-                Loading...
-              </div>
+          ))}
+        </div>
+
+        <div className="px-3 pb-3 space-y-1">
+          {weeks.map((week, weekIndex) => (
+            <div key={weekIndex} className="grid grid-cols-7 gap-1">
+              {week.map((day, dayIndex) => {
+                if (!day) return <div key={dayIndex} />
+
+                const dateStr = `${calYear}-${String(calMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+                const isToday = dateStr === today
+                const isFuture = dateStr > today
+                const isSelected = dateStr === selectedDate
+                const hasRecord = recordDates.has(dateStr)
+
+                return (
+                  <button
+                    key={dayIndex}
+                    disabled={isFuture}
+                    onClick={() => !isFuture && selectDate(dateStr)}
+                    className="relative flex flex-col items-center justify-center h-11 transition-all font-condensed font-bold text-sm rounded-2xl"
+                    style={{
+                      cursor: isFuture ? 'not-allowed' : 'pointer',
+                      background: isSelected ? sideMeta.accent : isToday ? 'rgba(245,166,35,0.12)' : 'transparent',
+                      border: `1px solid ${isSelected ? sideMeta.accent : isToday ? 'rgba(245,166,35,0.3)' : 'transparent'}`,
+                      color: isSelected ? '#000' : isFuture ? 'var(--border)' : isToday ? 'var(--accent)' : 'var(--text)',
+                    }}
+                  >
+                    {day}
+                    {hasRecord && !isSelected && <span className="absolute bottom-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full" style={{ background: 'var(--green)' }} />}
+                  </button>
+                )
+              })}
             </div>
-          ) : (
-            <div>
-              <div className="px-4 py-4 sm:px-5 mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between" style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderTop: `3px solid ${isPast ? 'var(--muted)' : 'var(--accent)'}` }}>
-                <div>
-                  <div className="font-condensed font-black text-lg sm:text-xl uppercase tracking-widest" style={{ color: isPast ? 'var(--text)' : 'var(--accent)' }}>
-                    {fmtDate(selectedDate)}
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2 mt-2">
-                    {isPast && <Tag label="Past" color="var(--muted)" border="var(--border)" bg="transparent" />}
-                    {isOffDay && !isPast && <Tag label="Off Day" color="var(--accent2)" border="rgba(224,60,60,0.3)" bg="rgba(224,60,60,0.07)" />}
-                    {isAdmin && isPast && <Tag label="Editable" color="var(--accent)" border="rgba(245,166,35,0.3)" bg="rgba(245,166,35,0.07)" />}
-                  </div>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <StatChip label="Present" value={presentCount} color="var(--green)" />
-                  <StatChip label="Absent" value={absentCount} color="var(--accent2)" />
-                </div>
-              </div>
+          ))}
+        </div>
+      </div>
 
-              {canEdit && (
-                <div className="flex gap-2 mb-3">
-                  <ABtn onClick={() => markAll(true)} label="All Present" color="var(--green)" />
-                  <ABtn onClick={() => markAll(false)} label="All Absent" color="var(--muted)" />
-                </div>
-              )}
+      {!selectedDate ? (
+        <div className="mobile-card flex items-center justify-center h-40" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
+          <div className="font-condensed font-bold text-sm tracking-[0.22em] uppercase" style={{ color: 'var(--muted)' }}>
+            Select a date
+          </div>
+        </div>
+      ) : dateLoading ? (
+        <div className="mobile-card flex items-center justify-center h-40" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
+          <div className="font-condensed text-sm tracking-widest uppercase animate-pulse" style={{ color: 'var(--muted)' }}>
+            Loading...
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="mobile-card px-4 py-4" style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderTop: `3px solid ${isPast ? 'var(--muted)' : sideMeta.accent}` }}>
+            <div className="font-condensed font-black text-lg uppercase tracking-[0.14em]" style={{ color: isPast ? 'var(--text)' : sideMeta.accent }}>
+              {fmtDate(selectedDate)}
+            </div>
+            <div className="grid grid-cols-3 gap-2 mt-4">
+              <StatChip label="P" value={presentCount} color="var(--green)" />
+              <StatChip label="A" value={absentCount} color="var(--accent2)" />
+              <StatChip label="B" value={blankCount} color="var(--muted)" />
+            </div>
+          </div>
 
-              {error && <Msg type="error" text={error} />}
-              {saveMsg && <Msg type="success" text={saveMsg} />}
+          {editThisDate && (
+            <div className="grid grid-cols-2 gap-2">
+              <ABtn onClick={() => markAll(true)} label="All P" color="var(--green)" />
+              <ABtn onClick={() => markAll(false)} label="All A" color="var(--accent2)" />
+            </div>
+          )}
 
-              <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', overflow: 'hidden' }}>
-                <div className="hidden sm:grid px-4 py-2.5 font-condensed font-bold text-xs tracking-widest uppercase" style={{ gridTemplateColumns: canEdit ? '44px 1fr 88px 108px 52px' : '44px 1fr 88px 108px', background: '#0d1014', borderBottom: `2px solid ${isPast ? 'var(--muted)' : 'var(--accent)'}`, color: 'var(--muted)' }}>
-                  <div>#</div>
-                  <div>Name</div>
-                  <div>ID</div>
-                  <div>Status</div>
-                  {canEdit && <div />}
-                </div>
+          {error && <Msg type="error" text={error} />}
+          {saveMsg && <Msg type="success" text={saveMsg} />}
 
-                {students.length === 0 ? (
-                  <div className="px-4 py-8 text-center font-condensed text-sm tracking-widest uppercase" style={{ color: 'var(--muted)' }}>
-                    No student data found
-                  </div>
-                ) : students.map((student, idx) => {
-                  const present = Boolean(attendance[student.studentId])
-                  const isFirst = idx === 0
+          <div className="space-y-3">
+              <div className="mobile-card" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
+                {students.map((student, index) => {
+                  const status = normalizeStatus(attendance[student.studentId])
+                  const isCurrent = nextStudentId === student._id
                   const isMarking = markingId === student.studentId
+                  const order = index + 1
 
                   return (
-                    <div key={student._id} className="student-row px-4 py-3 sm:grid sm:items-center" style={{ gridTemplateColumns: canEdit ? '44px 1fr 88px 108px 52px' : '44px 1fr 88px 108px', borderBottom: '1px solid var(--border)', borderLeft: isFirst && !isPast ? '3px solid var(--accent)' : '3px solid transparent', background: present ? 'rgba(34,197,94,0.04)' : 'transparent' }}>
-                      <div className="flex items-start justify-between gap-3 sm:contents">
-                        <div className="font-condensed font-black text-xl leading-none" style={{ color: isFirst && !isPast ? 'var(--accent)' : 'var(--muted)' }}>
-                          {String(idx + 1).padStart(2, '0')}
-                        </div>
-                        <div className="min-w-0 flex-1 sm:block">
-                          <div className="text-sm" style={{ color: 'var(--text)', fontWeight: isFirst && !isPast ? 700 : 400 }}>{student.name}</div>
-                          <div className="mt-1 sm:hidden font-condensed text-xs tracking-wider uppercase" style={{ color: 'var(--muted)' }}>{student.studentId}</div>
-                        </div>
-                        {canEdit && (
-                          <button onClick={() => toggleAttendance(student.studentId)} disabled={isMarking} className="sm:hidden w-10 h-10 flex items-center justify-center transition-all font-condensed font-bold text-sm" style={{ border: `1px solid ${present ? 'var(--green)' : 'var(--border)'}`, color: present ? 'var(--green)' : 'var(--muted)', background: present ? 'rgba(34,197,94,0.1)' : 'transparent', cursor: isMarking ? 'wait' : 'pointer', opacity: isMarking ? 0.5 : 1 }}>
-                            {isMarking ? '...' : present ? 'Yes' : 'No'}
-                          </button>
-                        )}
+                    <div key={student._id} className="student-row px-4 py-3 flex items-center gap-3" style={{ borderTop: index > 0 ? '1px solid var(--border)' : 'none', borderLeft: isCurrent ? `3px solid ${sideMeta.accent}` : '3px solid transparent', background: status === true ? 'rgba(34,197,94,0.04)' : status === false ? 'rgba(224,60,60,0.04)' : 'transparent' }}>
+                      <div className="font-condensed font-black text-xl leading-none shrink-0" style={{ color: isCurrent ? sideMeta.accent : 'var(--muted)' }}>
+                        {String(order).padStart(2, '0')}
                       </div>
-                      <div className="hidden sm:block text-sm" style={{ color: 'var(--text)', fontWeight: isFirst && !isPast ? 700 : 400 }}>{student.name}</div>
-                      <div className="hidden sm:block font-condensed text-xs tracking-wider uppercase" style={{ color: 'var(--muted)' }}>{student.studentId}</div>
-                      <div className="mt-2 sm:mt-0">
-                        <span className="inline-flex items-center gap-1.5 font-condensed font-bold text-xs tracking-widest uppercase" style={{ color: present ? 'var(--green)' : 'var(--muted)' }}>
-                          <span className="inline-block w-1.5 h-1.5 rounded-full" style={{ background: present ? 'var(--green)' : 'var(--muted)', boxShadow: present ? '0 0 6px var(--green)' : 'none' }} />
-                          {present ? 'Present' : 'Absent'}
-                        </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm" style={{ color: 'var(--text)', fontWeight: isCurrent ? 700 : 400 }}>{student.name}</div>
+                        <div className="mt-1 text-[11px] uppercase tracking-[0.2em]" style={{ color: 'var(--muted)' }}>{student.studentId}</div>
                       </div>
-                      {canEdit && (
-                        <button onClick={() => toggleAttendance(student.studentId)} disabled={isMarking} className="hidden sm:flex w-9 h-9 items-center justify-center transition-all font-condensed font-bold text-sm" style={{ border: `1px solid ${present ? 'var(--green)' : 'var(--border)'}`, color: present ? 'var(--green)' : 'var(--muted)', background: present ? 'rgba(34,197,94,0.1)' : 'transparent', cursor: isMarking ? 'wait' : 'pointer', opacity: isMarking ? 0.5 : 1 }}>
-                          {isMarking ? '...' : present ? 'Yes' : 'No'}
-                        </button>
-                      )}
+                      <div className="flex items-center gap-2 shrink-0">
+                        {editThisDate ? (
+                          <div className="flex gap-1">
+                            <StatusBtn label="P" active={status === true} disabled={isMarking} onClick={() => setAttendanceStatus(student.studentId, status === true ? null : true)} />
+                            <StatusBtn label="A" active={status === false} tone="danger" disabled={isMarking} onClick={() => setAttendanceStatus(student.studentId, status === false ? null : false)} />
+                          </div>
+                        ) : null}
+                      </div>
                     </div>
                   )
                 })}
               </div>
-            </div>
-          )}
-        </div>
-      </div>
+          </div>
+        </>
+      )}
     </div>
-  )
-}
-
-function Tag({ label, color, border, bg }) {
-  return (
-    <span className="font-condensed font-bold text-xs tracking-widest uppercase px-2 py-1" style={{ border: `1px solid ${border}`, color, background: bg }}>
-      {label}
-    </span>
   )
 }
 
 function StatChip({ label, value, color }) {
   return (
-    <div className="flex items-center gap-2 px-3 py-2 font-condensed font-bold text-xs tracking-widest uppercase" style={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--muted)' }}>
-      {label} <span className="text-base" style={{ color }}>{value}</span>
+    <div className="mobile-card flex flex-col items-center justify-center px-2 py-3 font-condensed font-bold text-[11px] tracking-[0.22em] uppercase" style={{ background: 'rgba(255,255,255,0.015)', border: '1px solid var(--border)', color: 'var(--muted)' }}>
+      <span>{label}</span>
+      <span className="text-lg mt-1" style={{ color }}>{value}</span>
     </div>
   )
 }
 
 function ABtn({ onClick, label, color }) {
   return (
-    <button onClick={onClick} className="flex-1 sm:flex-none font-condensed font-bold text-xs tracking-widest uppercase px-3 py-2 transition-all" style={{ border: `1px solid ${color}`, color, background: 'transparent', cursor: 'pointer' }}>
+    <button onClick={onClick} className="mobile-card font-condensed font-bold text-xs tracking-[0.24em] uppercase px-3 py-3 transition-all" style={{ border: `1px solid ${color}`, color, background: 'transparent', cursor: 'pointer' }}>
       {label}
     </button>
   )
@@ -348,8 +375,17 @@ function ABtn({ onClick, label, color }) {
 function Msg({ type, text }) {
   const isErr = type === 'error'
   return (
-    <div className="px-3 py-2 text-xs font-medium tracking-wide mb-3" style={{ background: isErr ? 'rgba(224,60,60,0.1)' : 'rgba(34,197,94,0.08)', border: `1px solid ${isErr ? 'rgba(224,60,60,0.3)' : 'rgba(34,197,94,0.3)'}`, color: isErr ? 'var(--accent2)' : 'var(--green)' }}>
+    <div className="mobile-card px-3 py-3 text-xs font-medium tracking-wide" style={{ background: isErr ? 'rgba(224,60,60,0.1)' : 'rgba(34,197,94,0.08)', border: `1px solid ${isErr ? 'rgba(224,60,60,0.3)' : 'rgba(34,197,94,0.3)'}`, color: isErr ? 'var(--accent2)' : 'var(--green)' }}>
       {text}
     </div>
+  )
+}
+
+function StatusBtn({ label, active, onClick, disabled = false, tone = 'success' }) {
+  const activeColor = tone === 'danger' ? 'var(--accent2)' : 'var(--green)'
+  return (
+    <button onClick={onClick} disabled={disabled} className="w-10 h-10 flex items-center justify-center font-condensed font-black text-xs transition-all rounded-2xl" style={{ border: `1px solid ${active ? activeColor : 'var(--border)'}`, color: active ? activeColor : 'var(--muted)', background: active ? `${tone === 'danger' ? 'rgba(224,60,60,0.12)' : 'rgba(34,197,94,0.12)'}` : 'transparent', cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.6 : 1 }}>
+      {label}
+    </button>
   )
 }

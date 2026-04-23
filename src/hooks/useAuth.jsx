@@ -1,5 +1,5 @@
 'use client'
-import { createContext, useContext, useState, useEffect } from 'react'
+import { createContext, useContext, useEffect, useState } from 'react'
 
 const AuthContext = createContext(null)
 
@@ -15,7 +15,7 @@ export function AuthProvider({ children }) {
     }
 
     fetch('/api/auth/me', { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => (r.ok ? r.json() : null))
+      .then(response => (response.ok ? response.json() : null))
       .then(data => {
         if (data) setUser(data)
       })
@@ -23,16 +23,17 @@ export function AuthProvider({ children }) {
       .finally(() => setLoading(false))
   }, [])
 
-  const login = async (username, password) => {
+  const login = async (password, side) => {
+    const username = `${side}-admin`
     const response = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ username, password, side }),
     })
     const data = await response.json()
     if (!response.ok) throw new Error(data.error || 'Login failed')
     localStorage.setItem('da_token', data.token)
-    setUser({ username: data.username, role: data.role })
+    setUser({ username: data.username, role: data.role, side: data.side })
     return data
   }
 
@@ -43,7 +44,7 @@ export function AuthProvider({ children }) {
 
   const authFetch = async (url, options = {}) => {
     const token = localStorage.getItem('da_token')
-    const res = await fetch(url, {
+    const response = await fetch(url, {
       ...options,
       headers: {
         'Content-Type': 'application/json',
@@ -52,16 +53,25 @@ export function AuthProvider({ children }) {
       },
     })
 
-    if (res.status === 401) {
+    if (response.status === 401) {
       logout()
       throw new Error('Unauthorized')
     }
 
-    return res
+    return response
   }
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, loading, isAdmin: user?.role === 'admin', authFetch }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        login,
+        logout,
+        loading,
+        isAdmin: user?.role === 'admin',
+        authFetch,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   )

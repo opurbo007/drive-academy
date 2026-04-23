@@ -1,13 +1,20 @@
 import Settings from '../models/Settings'
 import Student from '../models/Student'
+import { DEFAULT_SIDE, normalizeSide } from '@/lib/sides'
 
-export async function getOffDays() {
-  const s = await Settings.findOne({ key: 'offDays' })
+function resolveSide(side) {
+  return normalizeSide(side) || DEFAULT_SIDE
+}
+
+export async function getOffDays(side) {
+  const activeSide = resolveSide(side)
+  const s = await Settings.findOne({ side: activeSide, key: 'offDays' })
   return s ? s.value : [5, 6] // default: Fri, Sat
 }
 
-export async function setOffDays(days) {
-  await Settings.findOneAndUpdate({ key: 'offDays' }, { value: days }, { upsert: true })
+export async function setOffDays(side, days) {
+  const activeSide = resolveSide(side)
+  await Settings.findOneAndUpdate({ side: activeSide, key: 'offDays' }, { value: days }, { upsert: true })
 }
 
 export function isOffDay(offDays, dateStr) {
@@ -15,17 +22,20 @@ export function isOffDay(offDays, dateStr) {
   return offDays.includes(d.getDay())
 }
 
-export async function getLastRotationDate() {
-  const s = await Settings.findOne({ key: 'lastRotationDate' })
+export async function getLastRotationDate(side) {
+  const activeSide = resolveSide(side)
+  const s = await Settings.findOne({ side: activeSide, key: 'lastRotationDate' })
   return s ? s.value : null
 }
 
-export async function setLastRotationDate(date) {
-  await Settings.findOneAndUpdate({ key: 'lastRotationDate' }, { value: date }, { upsert: true })
+export async function setLastRotationDate(side, date) {
+  const activeSide = resolveSide(side)
+  await Settings.findOneAndUpdate({ side: activeSide, key: 'lastRotationDate' }, { value: date }, { upsert: true })
 }
 
-export async function reverseStudentOrder() {
-  const students = await Student.find({ active: true }).sort({ slotOrder: 1 })
+export async function reverseStudentOrder(side) {
+  const activeSide = resolveSide(side)
+  const students = await Student.find({ side: activeSide, active: true }).sort({ slotOrder: 1 })
   const total = students.length
   if (total <= 1) return false
 
@@ -49,11 +59,12 @@ function nextWorkingDay(offDays, dateStr) {
   }
 }
 
-export async function rotateIfNeeded(todayStr) {
-  const offDays = await getOffDays()
+export async function rotateIfNeeded(side, todayStr) {
+  const activeSide = resolveSide(side)
+  const offDays = await getOffDays(activeSide)
   if (isOffDay(offDays, todayStr)) return false
 
-  const lastRotation = await getLastRotationDate()
+  const lastRotation = await getLastRotationDate(activeSide)
   if (lastRotation === todayStr) return false
 
   if (lastRotation) {
@@ -61,7 +72,7 @@ export async function rotateIfNeeded(todayStr) {
     if (todayStr < expectedNext) return false
   }
 
-  await reverseStudentOrder()
-  await setLastRotationDate(todayStr)
+  await reverseStudentOrder(activeSide)
+  await setLastRotationDate(activeSide, todayStr)
   return true
 }

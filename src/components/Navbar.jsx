@@ -1,98 +1,129 @@
 'use client'
 import Link from 'next/link'
-import { usePathname, useRouter } from 'next/navigation'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { useAuth } from '@/hooks/useAuth'
+import { getSideLabel, normalizeSide, SIDE_OPTIONS } from '@/lib/sides'
 
-const NAV_LINKS = [
-  { href: '/', label: 'Today' },
-  { href: '/history', label: 'History' },
-]
+function withSide(path, side) {
+  return side ? `${path}?side=${side}` : path
+}
 
 export default function Navbar() {
   const { user, isAdmin, logout } = useAuth()
   const pathname = usePathname()
+  const searchParams = useSearchParams()
   const router = useRouter()
+  const side = normalizeSide(searchParams.get('side')) || normalizeSide(user?.side)
 
-  const handleLogout = () => { logout(); router.push('/') }
-  const adminLink = isAdmin
-    ? pathname === '/admin'
-      ? { href: '/', label: 'Back to Attendance' }
-      : { href: '/admin', label: 'Admin Panel' }
-    : null
+  const navLinks = side
+    ? [
+        { href: withSide('/', side), label: 'Today', active: pathname === '/' },
+        { href: withSide('/history', side), label: 'History', active: pathname === '/history' },
+      ]
+    : []
+
+  const handleLogout = () => {
+    const homeSide = normalizeSide(user?.side) || side
+    logout()
+    router.push(withSide('/', homeSide))
+  }
+
+  const handleSwitch = () => {
+    if (user) logout()
+    router.push('/')
+  }
+
+  const canOpenCaptain = isAdmin && user?.side && (!side || user.side === side)
 
   return (
-    <nav style={{ background: 'var(--surface)', borderBottom: '1px solid var(--border)', borderTop: '3px solid var(--accent)' }}>
-      <div className="max-w-4xl mx-auto px-4 py-3 sm:h-14 sm:py-0 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-6 min-w-0">
-          <Link href="/" className="flex items-center gap-2 min-w-0">
-            <span style={{ fontSize: 20 }}>Drive</span>
-            <span className="font-condensed font-black tracking-[0.22em] text-base sm:text-lg uppercase truncate" style={{ color: 'var(--accent)' }}>
-              Drive Academy
-            </span>
-          </Link>
-
-          <div className="flex items-center gap-1 overflow-x-auto no-scrollbar pb-1 sm:pb-0">
-            {NAV_LINKS.map(({ href, label }) => {
-              const active = pathname === href
-              return (
-                <Link
-                  key={href}
-                  href={href}
-                  className="font-condensed font-bold text-xs tracking-widest uppercase px-3 py-2 transition-all whitespace-nowrap"
-                  style={{
-                    color: active ? 'var(--accent)' : 'var(--muted)',
-                    borderBottom: `2px solid ${active ? 'var(--accent)' : 'transparent'}`,
-                  }}
-                >
-                  {label}
-                </Link>
-              )
-            })}
+    <nav className="mobile-nav" style={{ background: 'var(--surface)', borderBottom: '1px solid var(--border)', borderTop: '3px solid var(--accent)' }}>
+      <div className="max-w-md mx-auto px-4 py-3 flex items-center justify-between gap-3">
+        <Link href={withSide('/', side)} className="min-w-0">
+          <div className="font-condensed font-black text-lg tracking-[0.22em] uppercase truncate" style={{ color: 'var(--accent)' }}>
+            Drive Academy
           </div>
-        </div>
+          <div className="text-[11px] uppercase tracking-[0.28em]" style={{ color: 'var(--muted)' }}>
+            {side ? getSideLabel(side) : 'Select Side'}
+          </div>
+        </Link>
 
-        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-          {adminLink && (
-            <Link
-              href={adminLink.href}
-              className="font-condensed font-bold text-xs tracking-widest uppercase px-4 py-2 transition-all"
-              style={{ border: '1px solid var(--border)', color: 'var(--muted)' }}
-              onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.color = 'var(--accent)' }}
-              onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--muted)' }}
+        <div className="flex items-center gap-2">
+          {side && (
+            <button
+              onClick={handleSwitch}
+              className="font-condensed font-bold text-[11px] tracking-widest uppercase px-3 py-2"
+              style={{ border: '1px solid var(--border)', color: 'var(--muted)', background: 'transparent' }}
             >
-              {adminLink.label}
-            </Link>
+              Switch
+            </button>
           )}
-
           {user ? (
-            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-              <span
-                className="font-condensed text-xs tracking-wider uppercase px-2 py-1 rounded-full"
-                style={{ color: 'var(--accent)', background: 'rgba(245,166,35,0.08)', border: '1px solid rgba(245,166,35,0.18)' }}
-              >
-                User {user.username}
-              </span>
-              <button
-                onClick={handleLogout}
-                className="font-condensed font-bold text-xs tracking-widest uppercase px-4 py-2 transition-all"
-                style={{ border: '1px solid var(--border)', color: 'var(--muted)', background: 'transparent', cursor: 'pointer' }}
-                onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--accent2)'; e.currentTarget.style.color = 'var(--accent2)' }}
-                onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--muted)' }}
-              >
-                Logout
-              </button>
-            </div>
-          ) : (
+            <button
+              onClick={handleLogout}
+              className="font-condensed font-bold text-[11px] tracking-widest uppercase px-3 py-2"
+              style={{ border: '1px solid var(--border)', color: 'var(--muted)', background: 'transparent' }}
+            >
+              Logout
+            </button>
+          ) : side ? (
             <Link
-              href="/login"
-              className="font-condensed font-bold text-xs tracking-widest uppercase px-4 py-2 whitespace-nowrap"
+              href={withSide('/login', side)}
+              className="font-condensed font-bold text-[11px] tracking-widest uppercase px-3 py-2"
               style={{ border: '1px solid var(--accent)', color: 'var(--accent)', background: 'rgba(245,166,35,0.08)' }}
             >
-              Admin Login
+              Captain
+            </Link>
+          ) : null}
+        </div>
+      </div>
+
+      {side && (
+        <div className="max-w-md mx-auto px-4 pb-3 flex items-center gap-2 overflow-x-auto no-scrollbar">
+          {navLinks.map(link => (
+            <Link
+              key={link.href}
+              href={link.href}
+              className="font-condensed font-bold text-xs tracking-widest uppercase px-4 py-2 whitespace-nowrap"
+              style={{
+                border: `1px solid ${link.active ? 'var(--accent)' : 'var(--border)'}`,
+                color: link.active ? 'var(--accent)' : 'var(--muted)',
+                background: link.active ? 'rgba(245,166,35,0.08)' : 'transparent',
+              }}
+            >
+              {link.label}
+            </Link>
+          ))}
+
+          {canOpenCaptain && (
+            <Link
+              href={withSide('/admin', user.side)}
+              className="font-condensed font-bold text-xs tracking-widest uppercase px-4 py-2 whitespace-nowrap"
+              style={{
+                border: `1px solid ${pathname === '/admin' ? 'var(--accent)' : 'var(--border)'}`,
+                color: pathname === '/admin' ? 'var(--accent)' : 'var(--muted)',
+                background: pathname === '/admin' ? 'rgba(245,166,35,0.08)' : 'transparent',
+              }}
+            >
+              Control
             </Link>
           )}
         </div>
-      </div>
+      )}
+
+      {!side && (
+        <div className="max-w-md mx-auto px-4 pb-3 flex items-center gap-2 overflow-x-auto no-scrollbar">
+          {SIDE_OPTIONS.map(option => (
+            <Link
+              key={option.key}
+              href={`/?side=${option.key}`}
+              className="font-condensed font-bold text-xs tracking-widest uppercase px-4 py-2 whitespace-nowrap"
+              style={{ border: '1px solid var(--border)', color: 'var(--muted)' }}
+            >
+              {option.label}
+            </Link>
+          ))}
+        </div>
+      )}
     </nav>
   )
 }

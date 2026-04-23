@@ -1,10 +1,12 @@
 import mongoose from 'mongoose'
 import bcrypt from 'bcryptjs'
+import { SIDE_KEYS } from '@/lib/sides'
 
 const schema = new mongoose.Schema({
   username: { type: String, required: true, unique: true },
   password: { type: String, required: true },
   role: { type: String, enum: ['admin'], default: 'admin' },
+  side: { type: String, enum: SIDE_KEYS, required: true },
 }, { timestamps: true })
 
 schema.pre('save', async function (next) {
