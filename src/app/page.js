@@ -122,13 +122,13 @@ function SideChooser() {
               className="font-condensed font-black text-2xl tracking-[0.16em] uppercase"
               style={{ color: option.accent }}
             >
-              {option.label}
+              {option.label} sir
             </div>
             <div
               className="text-xs tracking-[0.24em] uppercase mt-1"
               style={{ color: "var(--muted)" }}
             >
-              Student flow + separate captain
+              Only for students of {option.label} sir.
             </div>
             <div className="grid grid-cols-2 gap-2 mt-4">
               <Link

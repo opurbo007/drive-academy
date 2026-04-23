@@ -110,7 +110,7 @@ export default function Navbar() {
         </div>
       )}
 
-      {!side && (
+      {/* {!side && (
         <div className="max-w-md mx-auto px-4 pb-3 flex items-center gap-2 overflow-x-auto no-scrollbar">
           {SIDE_OPTIONS.map(option => (
             <Link
@@ -123,7 +123,7 @@ export default function Navbar() {
             </Link>
           ))}
         </div>
-      )}
+      )} */}
     </nav>
   )
 }
