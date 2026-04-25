@@ -19,6 +19,7 @@ export default function Navbar() {
     ? [
         { href: withSide('/', side), label: 'Today', active: pathname === '/' },
         { href: withSide('/history', side), label: 'History', active: pathname === '/history' },
+        { href: withSide('/checkup-today', side), label: 'Checkup Today', active: pathname === '/checkup-today' },
       ]
     : []
 
@@ -99,9 +100,9 @@ export default function Navbar() {
               href={withSide('/admin', user.side)}
               className="font-condensed font-bold text-xs tracking-widest uppercase px-4 py-2 whitespace-nowrap"
               style={{
-                border: `1px solid ${pathname === '/admin' ? 'var(--accent)' : 'var(--border)'}`,
-                color: pathname === '/admin' ? 'var(--accent)' : 'var(--muted)',
-                background: pathname === '/admin' ? 'rgba(245,166,35,0.08)' : 'transparent',
+                border: `1px solid ${pathname.startsWith('/admin') ? 'var(--accent)' : 'var(--border)'}`,
+                color: pathname.startsWith('/admin') ? 'var(--accent)' : 'var(--muted)',
+                background: pathname.startsWith('/admin') ? 'rgba(245,166,35,0.08)' : 'transparent',
               }}
             >
               Control

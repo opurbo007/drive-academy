@@ -162,6 +162,11 @@ function AttendanceBoard({ side }) {
   const [date] = useState(todayStr);
   const [students, setStudents] = useState([]);
   const [attendance, setAttendance] = useState({});
+  const [checkup, setCheckup] = useState({
+    groups: [],
+    currentGroup: [],
+    currentIndex: 0,
+  });
   const [isOffDay, setIsOffDay] = useState(false);
   const [loading, setLoading] = useState(true);
   const [markingId, setMarkingId] = useState(null);
@@ -172,19 +177,24 @@ function AttendanceBoard({ side }) {
 
   const fetchData = useCallback(async () => {
     try {
-      const [studentsRes, attendanceRes] = await Promise.all([
+      const [studentsRes, attendanceRes, checkupRes] = await Promise.all([
         fetch(`/api/students?date=${date}&side=${side}`),
         fetch(`/api/attendance?date=${date}&side=${side}`),
+        fetch(`/api/checkup?date=${date}&side=${side}`),
       ]);
       const studentsData = await studentsRes.json();
       const attendanceData = await attendanceRes.json();
+      const checkupData = await checkupRes.json();
       if (!studentsRes.ok)
         throw new Error(studentsData.error || "Failed to load students");
       if (!attendanceRes.ok)
         throw new Error(attendanceData.error || "Failed to load attendance");
+      if (!checkupRes.ok)
+        throw new Error(checkupData.error || "Failed to load checkup");
       setStudents(studentsData.students || []);
       setIsOffDay(studentsData.isOffDay || false);
       setAttendance(attendanceData.attendance || {});
+      setCheckup(checkupData);
       setLastUpdated(new Date());
       setError("");
     } catch (fetchError) {
