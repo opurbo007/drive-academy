@@ -7,6 +7,7 @@ const schema = new mongoose.Schema({
   name: { type: String, required: true },
   shift: { type: String, enum: ['Shift 1', 'Shift 2'], default: 'Shift 1', required: true },
   captain: { type: String, default: 'Student' },
+  cleanupCount: { type: Number, default: 0, min: 0 },
   slotOrder: { type: Number, required: true },
   active: { type: Boolean, default: true },
 }, { timestamps: true })

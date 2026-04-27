@@ -33,16 +33,18 @@ export async function POST(request) {
   if (adminOrRes instanceof Response) return adminOrRes
 
   try {
-    const { studentId, name } = await request.json()
+    const { studentId, name, cleanupCount } = await request.json()
     const side = normalizeSide(adminOrRes.side)
     const maxOrder = await Student.findOne({ side }).sort({ slotOrder: -1 })
     const slotOrder = maxOrder ? maxOrder.slotOrder + 1 : 0
+    const safeCleanupCount = Math.max(Number(cleanupCount) || 0, 0)
 
     const student = await Student.create({
       side,
       studentId,
       name,
       captain: 'Student',
+      cleanupCount: safeCleanupCount,
       slotOrder,
     })
 
