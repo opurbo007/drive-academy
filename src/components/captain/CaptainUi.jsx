@@ -61,6 +61,7 @@ export function CaptainNav({ side }) {
     { href: withSide('/admin', side), label: 'Students', path: '/admin' },
     { href: withSide('/admin/off-days', side), label: 'Off Day', path: '/admin/off-days' },
     { href: withSide('/admin/checkup', side), label: 'Checkup', path: '/admin/checkup' },
+    { href: withSide('/admin/cleanup', side), label: 'Clean Up', path: '/admin/cleanup' },
     { href: withSide('/admin/password', side), label: 'Password', path: '/admin/password' },
   ]
 

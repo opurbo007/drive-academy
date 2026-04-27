@@ -17,7 +17,6 @@ function CheckupPageContent() {
   const [checkupCurrentIndex, setCheckupCurrentIndex] = useState(0)
   const [selectedCheckupIds, setSelectedCheckupIds] = useState([])
   const [savingCheckup, setSavingCheckup] = useState(false)
-  const [savingCleanupId, setSavingCleanupId] = useState(null)
   const [pageLoading, setPageLoading] = useState(true)
   const [msg, setMsg] = useState('')
   const [err, setErr] = useState('')
@@ -84,28 +83,6 @@ function CheckupPageContent() {
       flash(setErr, requestError.message || 'Failed to save checkup groups')
     } finally {
       setSavingCheckup(false)
-    }
-  }
-
-  const setCleanupCount = async (student, nextValue) => {
-    const safeCleanupCount = Math.max(Number(nextValue) || 0, 0)
-    setSavingCleanupId(student._id)
-    try {
-      const response = await authFetch(`/api/students/${student._id}?side=${side}`, {
-        method: 'PUT',
-        body: JSON.stringify({ cleanupCount: safeCleanupCount }),
-      })
-      const data = await response.json()
-      if (!response.ok) throw new Error(data.error || 'Failed to update cleanup count')
-
-      setStudents(prev => prev.map(item => (item._id === data._id ? data : item)))
-      setCheckupGroups(prev =>
-        prev.map(group => group.map(item => (item._id === data._id ? data : item)))
-      )
-    } catch (requestError) {
-      flash(setErr, requestError.message || 'Failed to update cleanup count')
-    } finally {
-      setSavingCleanupId(null)
     }
   }
 
@@ -200,72 +177,6 @@ function CheckupPageContent() {
           <button onClick={saveCheckup} disabled={savingCheckup} className="mobile-card font-condensed font-bold text-xs tracking-[0.24em] uppercase px-4 py-3 w-full" style={{ background: sideMeta.accent, color: '#000', border: 'none', opacity: savingCheckup ? 0.7 : 1 }}>
             {savingCheckup ? 'Saving...' : 'Save Checkup'}
           </button>
-        </div>
-      </Card>
-
-      <Card title="Clean Up" sub="Captain can set how many times each student cleaned the car.">
-        <div className="space-y-2">
-          {students.map(student => {
-            const cleanupCount = Math.max(Number(student.cleanupCount) || 0, 0)
-            const isSaving = savingCleanupId === student._id
-
-            return (
-              <div key={student._id} className="mobile-card px-4 py-4" style={{ background: 'rgba(255,255,255,0.015)', border: '1px solid var(--border)' }}>
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm" style={{ color: 'var(--text)', fontWeight: 600 }}>
-                      {student.name}
-                    </div>
-                    <div className="text-[11px] mt-1 uppercase tracking-[0.2em]" style={{ color: 'var(--muted)' }}>
-                      {student.studentId}
-                    </div>
-                  </div>
-                  <div className="shrink-0 text-right">
-                    <div className="font-condensed font-bold text-[11px] tracking-[0.22em] uppercase" style={{ color: 'var(--muted)' }}>
-                      Total
-                    </div>
-                    <div className="font-condensed font-black text-2xl" style={{ color: sideMeta.accent }}>
-                      {cleanupCount}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-[56px_minmax(0,1fr)_56px] gap-2 mt-3">
-                  <button
-                    onClick={() => setCleanupCount(student, cleanupCount - 1)}
-                    disabled={isSaving || cleanupCount === 0}
-                    className="mobile-card font-condensed font-black text-base px-3 py-3"
-                    style={{ border: '1px solid var(--border)', color: 'var(--text)', background: 'transparent', opacity: isSaving || cleanupCount === 0 ? 0.5 : 1 }}
-                  >
-                    -
-                  </button>
-                  <input
-                    type="number"
-                    min="0"
-                    value={cleanupCount}
-                    disabled={isSaving}
-                    onChange={event => {
-                      const value = event.target.value
-                      setStudents(prev =>
-                        prev.map(item => (item._id === student._id ? { ...item, cleanupCount: value } : item))
-                      )
-                    }}
-                    onBlur={event => setCleanupCount(student, event.target.value)}
-                    className="px-4 py-3 text-center text-sm outline-none transition-all w-full rounded-2xl"
-                    style={{ background: 'var(--bg)', border: '1px solid var(--border)', color: 'var(--text)', opacity: isSaving ? 0.65 : 1 }}
-                  />
-                  <button
-                    onClick={() => setCleanupCount(student, cleanupCount + 1)}
-                    disabled={isSaving}
-                    className="mobile-card font-condensed font-black text-base px-3 py-3"
-                    style={{ border: `1px solid ${sideMeta.accent}`, color: sideMeta.accent, background: 'transparent', opacity: isSaving ? 0.5 : 1 }}
-                  >
-                    +
-                  </button>
-                </div>
-              </div>
-            )
-          })}
         </div>
       </Card>
     </CaptainShell>

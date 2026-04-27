@@ -2,7 +2,7 @@
 import Link from 'next/link'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { useAuth } from '@/hooks/useAuth'
-import { getSideLabel, normalizeSide, SIDE_OPTIONS } from '@/lib/sides'
+import { getSideLabel, normalizeSide } from '@/lib/sides'
 
 function withSide(path, side) {
   return side ? `${path}?side=${side}` : path
@@ -19,7 +19,8 @@ export default function Navbar() {
     ? [
         { href: withSide('/', side), label: 'Today', active: pathname === '/' },
         { href: withSide('/history', side), label: 'History', active: pathname === '/history' },
-        { href: withSide('/checkup-today', side), label: 'Checkup Today', active: pathname === '/checkup-today' },
+        { href: withSide('/checkup-today', side), label: 'Checkup', active: pathname === '/checkup-today' },
+        { href: withSide('/cleanup', side), label: 'Clean Up', active: pathname === '/cleanup' },
       ]
     : []
 
